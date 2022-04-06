@@ -1,115 +1,260 @@
+import 'dart:developer' as dev;
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const ProviderScope(child: ProiApp()));
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({Key? key}) : super(key: key);
+// ! -------- Models --------
+@immutable
+class Node {
+  final String uniqueKey = DateTime.now().toString();
+  final Offset offset;
+  Node({required this.offset});
 
-  // This widget is the root of your application.
+  Node copyWith({Offset? offset}) {
+    return Node(offset: offset!);
+  }
+}
+
+// ! -------- Providers --------
+
+class NodesNotifier extends StateNotifier<List<Node>> {
+  NodesNotifier() : super([]);
+
+  // take the node Id [which is time stamp of a node that is captured during each node creation] and also offset provided by
+  void updateNodePosition(Node selectedNode,
+      {Offset? offset, double? dx = 0, double? dy = 0}) {
+    Offset newOffset;
+    if (offset != null) {
+      newOffset = offset;
+    } else {
+      newOffset = Offset(dx!, dy!);
+    }
+    state = [
+      for (final node in state)
+        if (node != selectedNode) node else node.copyWith(offset: newOffset)
+    ];
+  }
+
+  void addNode(Offset offset) {
+    state = [...state, Node(offset: offset)];
+  }
+
+  void deleteNode(Node node) {
+    state = [
+      for (final tempNode in state)
+        if (tempNode != node) tempNode
+    ];
+  }
+}
+
+final nodesProvider = StateNotifierProvider<NodesNotifier, List<Node>>((ref) {
+  return NodesNotifier();
+});
+
+final isNodeSearchVisibleProvider = StateProvider<bool>((ref) {
+  return false;
+});
+
+final sandboxScaleProvider = StateProvider<double>(((ref) {
+  return 100;
+}));
+
+final sandboxPositionProvider = StateProvider<Offset>(((ref) {
+  return const Offset(-2000, -2000);
+}));
+
+// ! -------- UI --------
+
+class ProiApp extends StatelessWidget {
+  const ProiApp({Key? key}) : super(key: key);
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // Try running your application with "flutter run". You'll see the
-        // application has a blue toolbar. Then, without quitting the app, try
-        // changing the primarySwatch below to Colors.green and then invoke
-        // "hot reload" (press "r" in the console where you ran "flutter run",
-        // or simply save your changes to "hot reload" in a Flutter IDE).
-        // Notice that the counter didn't reset back to zero; the application
-        // is not restarted.
-        primarySwatch: Colors.blue,
+        primaryColor: const Color.fromRGBO(70, 255, 99, 1),
+        fontFamily: GoogleFonts.jetBrainsMono().fontFamily,
+        iconTheme: const IconThemeData(
+          color: Colors.white,
+        ),
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      debugShowCheckedModeBanner: false,
+      home: const SandBox(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({Key? key, required this.title}) : super(key: key);
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class NodeWidget extends ConsumerWidget {
+  const NodeWidget({
+    Key? key,
+    required this.node,
+  }) : super(key: key);
+  final Node node;
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Positioned(
+      left: node.offset.dx,
+      top: node.offset.dy,
+      child: GestureDetector(
+        onDoubleTap: () => ref.read(nodesProvider.notifier).deleteNode(node),
+        onPanUpdate: (details) => ref
+            .read(nodesProvider.notifier)
+            .updateNodePosition(node, offset: details.globalPosition),
+        child: Container(
+          height: 100,
+          width: 100,
+          decoration: const BoxDecoration(
+            borderRadius: BorderRadius.all(Radius.circular(16)),
+            color: Colors.white,
+            boxShadow: [BoxShadow()],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class SandBox extends ConsumerWidget {
+  const SandBox({Key? key}) : super(key: key);
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    List<Node> nodes = ref.watch(nodesProvider);
+    Offset sandboxPosition = ref.watch(sandboxPositionProvider);
+    return Scaffold(
+      backgroundColor: Colors.black,
+      floatingActionButton: IconButton(
+        onPressed: () {
+          ref.read(nodesProvider.notifier).addNode(const Offset(100, 0));
+        },
+        color: Theme.of(context).primaryColor,
+        icon: const Icon(
+          Icons.add,
+        ),
+      ),
+      body: Stack(
+        children: [
+          InteractiveViewer(
+            // maxScale: 2.0,
+            // minScale: 0.1,
+
+            onInteractionUpdate: (details) {
+              final delta = details.focalPointDelta;
+              if (delta.dx + sandboxPosition.dx < 2000 &&
+                  delta.dx + sandboxPosition.dx > -2000) {
+                ref.read(sandboxPositionProvider.notifier).state =
+                    ref.read(sandboxPositionProvider.notifier).state +
+                        Offset(delta.dx, 0);
+
+                for (final node in nodes) {
+                  ref.read(nodesProvider.notifier).updateNodePosition(node,
+                      offset: node.offset + Offset(delta.dx, 0));
+                }
+              }
+              // ! nodes aren't move in [dy]
+              if (delta.dy + sandboxPosition.dy < 2000 &&
+                  delta.dy + sandboxPosition.dy > -2000) {
+                ref.read(sandboxPositionProvider.notifier).state =
+                    ref.read(sandboxPositionProvider.notifier).state +
+                        Offset(0, delta.dy);
+
+                for (final node in nodes) {
+                  ref.read(nodesProvider.notifier).updateNodePosition(node,
+                      offset: node.offset + Offset(0, delta.dy));
+                }
+                // nodes.isNotEmpty ? dev.log("${nodes.first.offset}") : null;
+              }
+            },
+            child: Stack(
+              // alignment: Alignment.center,
+              children: [
+                Positioned(
+                  left: sandboxPosition.dx,
+                  top: sandboxPosition.dy,
+                  child: Container(
+                    height: 10000,
+                    width: 10000,
+                    color: Colors.black,
+                    child: GridPaper(
+                      color: Colors.grey.withOpacity(0.5),
+                      interval: 50,
+                      // divisions: 1,
+                      // subdivisions: 2,
+                    ),
+                  ),
+                ),
+                if (nodes.isNotEmpty)
+                  ...[for (final node in nodes) NodeWidget(node: node)]
+                      .toList(),
+              ],
+            ),
+            // ),
+          ),
+          const MenuBar(),
+        ],
+      ),
+    );
   }
+}
+
+class MenuBar extends StatelessWidget {
+  const MenuBar({
+    Key? key,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
+      // color: Colors.black,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                "project-name.py",
+                style: Theme.of(context)
+                    .textTheme
+                    .titleSmall
+                    ?.copyWith(color: Theme.of(context).primaryColor),
+              ),
+              IconButton(
+                  onPressed: () {},
+                  padding: const EdgeInsets.only(left: 16),
+                  icon: const Icon(
+                    Icons.download_for_offline_rounded,
+                    // color: Colors.white,
+                  )),
+              const Spacer(),
+              IconButton(
+                  onPressed: () {},
+                  padding: const EdgeInsets.only(left: 32),
+                  icon: const Icon(
+                    Icons.person_outline_rounded,
+                    // color: Colors.white,
+                  )),
+              IconButton(
+                  padding: const EdgeInsets.only(left: 32),
+                  onPressed: () {},
+                  icon: const Icon(
+                    Icons.settings_rounded,
+                    // color: Colors.white,
+                  )),
+            ],
+          ),
+          Text("PROI v0.0.0",
+              style: Theme.of(context).textTheme.subtitle2?.copyWith(
+                  fontSize: 8, color: Theme.of(context).primaryColor))
+        ],
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Invoke "debug painting" (press "p" in the console, choose the
-          // "Toggle Debug Paint" action from the Flutter Inspector in Android
-          // Studio, or the "Toggle Debug Paint" command in Visual Studio Code)
-          // to see the wireframe for each widget.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
-            ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headline4,
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
     );
   }
 }
